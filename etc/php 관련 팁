@@ -1,0 +1,143 @@
+[Laravel Sanctum 세션 인증 요약]
+
+1. 기본 개념
+- 세션 인증은 브라우저 쿠키 + 서버 세션 저장소로 로그인 상태를 유지한다.
+- 브라우저는 laravel-session 쿠키를 들고 다닌다.
+- Laravel은 그 쿠키로 storage/framework/sessions 안의 세션 파일을 찾는다.
+- 세션 안에 로그인한 user_id가 있으면 로그인 상태로 본다.
+
+
+2. 필요한 패키지
+composer require laravel/sanctum
+
+
+3. 핵심 설정 파일
+
+config/sanctum.php
+- SANCTUM_STATEFUL_DOMAINS 값을 읽는다.
+- 어떤 프론트 도메인을 "세션 쿠키 기반 요청"으로 인정할지 정한다.
+
+.env
+SESSION_DRIVER=file
+SANCTUM_STATEFUL_DOMAINS=localhost:5173,127.0.0.1:5173
+
+의미:
+- 세션은 파일에 저장한다.
+- Vue 개발 서버 localhost:5173에서 온 요청은 세션 인증 요청으로 인정한다.
+
+
+4. API에도 세션 미들웨어 붙이기
+
+bootstrap/app.php
+
+->withMiddleware(function (Middleware $middleware): void {
+    $middleware->statefulApi();
+})
+
+역할:
+- routes/api.php 요청에도 Sanctum 세션 처리 미들웨어를 붙인다.
+- 쿠키 읽기
+- 세션 시작
+- CSRF 검증
+- 세션에서 로그인 유저 확인
+
+
+5. 보호할 라우트에는 auth:sanctum 사용
+
+routes/api.php
+
+Route::get('/auth/me', [AuthController::class, 'me'])
+    ->middleware('auth:sanctum');
+
+Route::post('/posts', [PostController::class, 'store'])
+    ->middleware('auth:sanctum');
+
+역할:
+- auth:sanctum은 현재 요청이 로그인된 사용자인지 검사한다.
+- 로그인 안 했으면 401 응답.
+
+
+6. statefulApi()와 auth:sanctum 차이
+
+statefulApi()
+- API 요청에서 세션/쿠키/CSRF를 사용할 수 있게 준비한다.
+
+auth:sanctum
+- 실제로 로그인한 유저인지 검사한다.
+
+둘 다 필요하다.
+
+statefulApi() 없으면:
+- API 요청에서 세션 쿠키를 제대로 로그인 인증으로 읽기 어렵다.
+
+auth:sanctum 없으면:
+- 로그인하지 않아도 해당 API에 접근할 수 있다.
+
+
+7. /sanctum/csrf-cookie 역할
+
+GET /sanctum/csrf-cookie
+
+역할:
+- 로그인, 회원가입, 글쓰기 같은 POST 요청 전에 CSRF 쿠키를 발급한다.
+- 브라우저에 XSRF-TOKEN 쿠키가 생긴다.
+
+그 다음 POST 요청에서:
+- 쿠키를 같이 보낸다.
+- X-XSRF-TOKEN 헤더도 같이 보낸다.
+
+이걸 안 하면 Laravel이 419 에러를 낼 수 있다.
+
+
+8. 프론트 fetch 핵심
+
+fetch('/sanctum/csrf-cookie', {
+  credentials: 'include'
+})
+
+fetch('/api/auth/login', {
+  method: 'POST',
+  credentials: 'include',
+  headers: {
+    Accept: 'application/json',
+    'Content-Type': 'application/json',
+    'X-XSRF-TOKEN': xsrfToken
+  },
+  body: JSON.stringify({
+    email,
+    password
+  })
+})
+
+credentials: 'include' 의미:
+- 브라우저 쿠키를 요청에 포함한다.
+
+
+9. 로그인 전체 흐름
+
+1) Vue가 /sanctum/csrf-cookie 호출
+2) Laravel이 XSRF-TOKEN, laravel-session 쿠키 발급
+3) Vue가 /api/auth/login 호출
+4) 쿠키와 X-XSRF-TOKEN 헤더를 같이 보냄
+5) Laravel이 CSRF 확인
+6) 이메일/비밀번호 확인
+7) 성공하면 세션 파일에 로그인 정보 저장
+8) 이후 /api/auth/me 요청 시 쿠키로 로그인 유저 확인
+
+
+10. 한 줄 정리
+
+statefulApi()는 API에서 세션 인증을 가능하게 해주는 준비 미들웨어이고,
+auth:sanctum은 해당 API를 로그인 사용자만 접근하게 막는 인증 미들웨어다.
+
+Session
+★★★★★
+실제 세션 저장소 관리자
+
+Auth
+★★★★★
+로그인 관리자
+
+Sanctum
+★★★★★
+API 요청을 Auth와 Session에 연결해주는 중개자
